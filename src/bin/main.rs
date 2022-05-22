@@ -20,7 +20,9 @@ use winit::{
 #[derive(Parser)]
 struct Args {
     path: PathBuf,
-    // note: u8,
+
+    #[clap(long)]
+    disable_editor: bool,
 }
 
 struct MyHost;
@@ -138,22 +140,24 @@ fn main() -> Result<()> {
     };
     stream_handle.play_raw(source)?;
 
-    if let Some(mut editor) = editor {
-        let event_loop = EventLoop::new();
-        let window = Window::new(&event_loop)?;
-        let raw_window_handle = window.raw_window_handle();
-        let hwnd = match raw_window_handle {
-            RawWindowHandle::Win32(win32_handle) => win32_handle.hwnd,
-            _ => panic!("unsupported raw handle type: {:?}", raw_window_handle),
-        };
-        let success = editor.open(hwnd);
+    if !args.disable_editor {
+        if let Some(mut editor) = editor {
+            let event_loop = EventLoop::new();
+            let window = Window::new(&event_loop)?;
+            let raw_window_handle = window.raw_window_handle();
+            let hwnd = match raw_window_handle {
+                RawWindowHandle::Win32(win32_handle) => win32_handle.hwnd,
+                _ => panic!("unsupported raw handle type: {:?}", raw_window_handle),
+            };
+            let success = editor.open(hwnd);
 
-        println!("Successfully created window for editor: {}", success);
+            println!("Successfully created window for editor: {}", success);
 
-        event_loop.run(move |event, elwt, control_flow| {
-            eprintln!("{event:?}, {elwt:?}");
-            *control_flow = ControlFlow::Wait;
-        })
+            event_loop.run(move |event, elwt, control_flow| {
+                eprintln!("{event:?}, {elwt:?}");
+                *control_flow = ControlFlow::Wait;
+            })
+        }
     }
 
     std::io::stdin().read_line(&mut String::new())?;
