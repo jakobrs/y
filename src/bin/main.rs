@@ -43,7 +43,7 @@ impl Host for MyHost {
 
 /// An iterator over the samples produced by a plugin
 struct PluginSource {
-    plugin: Arc<Mutex<PluginInstance>>,
+    plugin: PluginInstance,
     host_buffer: HostBuffer<f32>,
     inputs: Vec<Vec<f32>>,
     outputs: Vec<Vec<f32>>,
@@ -63,10 +63,7 @@ impl Iterator for PluginSource {
     fn next(&mut self) -> Option<Self::Item> {
         if self.current_position == self.length {
             let mut audio_buffer = self.host_buffer.bind(&self.inputs, &mut self.outputs);
-
-            let mut plugin = self.plugin.lock().unwrap();
-            plugin.process(&mut audio_buffer);
-
+            self.plugin.process(&mut audio_buffer);
             self.current_position = 0;
         }
 
@@ -123,11 +120,9 @@ fn main() -> Result<()> {
     // Send a midi signal
     // send_midi_thing(&mut plugin, args.note);
 
-    let plugin = Arc::new(Mutex::new(plugin));
-
     let (_stream, stream_handle) = OutputStream::try_default()?;
     let source = PluginSource {
-        plugin: plugin.clone(),
+        plugin,
         host_buffer,
         inputs,
         outputs,
