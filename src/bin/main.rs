@@ -83,17 +83,6 @@ fn main() -> Result<()> {
         None
     };
 
-    let mut midi_events_buffer = vec![];
-
-    // send_midi(
-    //     &mut plugin,
-    //     &mut midi_events_buffer,
-    //     &[midi_event_from_raw_midi(RawMidi {
-    //         time: 0,
-    //         bytes: &[0x90, 60, 0x7f],
-    //     })],
-    // );
-
     let mut host_buffer = SendHostBuffer(HostBuffer::from_info(&plugin_info));
 
     let mut options = jack::ClientOptions::empty();
@@ -122,6 +111,16 @@ fn main() -> Result<()> {
         .context("Registering MIDI input ports")?;
 
     let mut midi_events = vec![];
+    let mut midi_events_buffer = vec![];
+
+    // send_midi(
+    //     &mut plugin,
+    //     &mut midi_events_buffer,
+    //     &[midi_event_from_raw_midi(RawMidi {
+    //         time: 0,
+    //         bytes: &[0x90, 60, 0x7f],
+    //     })],
+    // );
 
     let callback = move |_client: &jack::Client, ps: &jack::ProcessScope| -> jack::Control {
         // it's probably a bad idea to re-allocate these two vectors on every call but who cares
