@@ -131,7 +131,6 @@ fn main() -> Result<()> {
         midi_events.clear();
         for port in midi_input_ports.iter() {
             for raw_midi in port.iter(ps) {
-                dbg!(raw_midi);
                 midi_events.push(midi_event_from_raw_midi(raw_midi));
             }
         }
