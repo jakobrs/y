@@ -81,6 +81,8 @@ fn main() -> Result<()> {
         None
     };
 
+    let mut midi_events_buffer = vec![];
+
     // send_midi(
     //     &mut plugin,
     //     &[midi_event_from_raw_midi(RawMidi {
@@ -134,7 +136,7 @@ fn main() -> Result<()> {
             }
         }
 
-        send_midi(&mut plugin, midi_events.as_slice());
+        send_midi(&mut plugin, &mut midi_events_buffer, &midi_events);
 
         let mut audio_buffer = host_buffer.bind(&inputs, &mut outputs);
         plugin.process(&mut audio_buffer);
@@ -189,7 +191,7 @@ fn midi_event_from_raw_midi(raw_midi: RawMidi) -> MidiEvent {
 }
 
 #[allow(dead_code)]
-fn send_midi(plugin: &mut PluginInstance, midi_events: &[MidiEvent]) {
+fn send_midi(plugin: &mut PluginInstance, events_buffer: &mut Vec<u64>, midi_events: &[MidiEvent]) {
     let num_events = midi_events.len();
 
     if num_events > 0 {
@@ -197,10 +199,12 @@ fn send_midi(plugin: &mut PluginInstance, midi_events: &[MidiEvent]) {
 
         println!("Sending {num_events} midi events");
 
-        let events_buffer: Vec<u64> = [u64::from_le(num_events as u64), 0]
-            .into_iter()
-            .chain(midi_events.iter().map(|event| event as *const _ as u64))
-            .collect();
+        events_buffer.clear();
+        events_buffer.extend(
+            [u64::from_le(num_events as u64), 0]
+                .into_iter()
+                .chain(midi_events.iter().map(|event| event as *const _ as u64)),
+        );
 
         // SAFETY: none
         let events: &Events = unsafe { std::mem::transmute(events_buffer.as_slice().as_ptr()) };
