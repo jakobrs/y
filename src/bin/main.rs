@@ -191,7 +191,6 @@ fn midi_event_from_raw_midi(raw_midi: RawMidi) -> MidiEvent {
     }
 }
 
-#[allow(dead_code)]
 fn send_midi(plugin: &mut PluginInstance, events_buffer: &mut Vec<u64>, midi_events: &[MidiEvent]) {
     let num_events = midi_events.len();
 
