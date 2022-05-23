@@ -6,9 +6,9 @@ use std::{
 
 use anyhow::Result;
 use clap::Parser;
-use jack::{AudioIn, AudioOut};
+use jack::{AudioIn, AudioOut, MidiIn, RawMidi};
 use vst::{
-    api::{Event, EventType, Events, MidiEvent},
+    api::{EventType, Events, MidiEvent},
     host::{Host, HostBuffer, PluginInstance, PluginLoader},
     plugin::Plugin,
 };
@@ -16,6 +16,9 @@ use vst::{
 #[derive(Parser)]
 struct Args {
     path: PathBuf,
+
+    #[clap(long)]
+    extra_midi_in: i32,
 }
 
 struct MyHost;
@@ -77,6 +80,13 @@ fn main() -> Result<()> {
         .map(|i| client.register_port(&format!("out{i}"), AudioOut::default()))
         .collect::<Result<_, _>>()?;
 
+    let midi_input_ports: Vec<jack::Port<MidiIn>> = (0..plugin_info.midi_inputs
+        + args.extra_midi_in as i32)
+        .map(|i| client.register_port(&format!("midi_in{i}"), MidiIn::default()))
+        .collect::<Result<_, _>>()?;
+
+    let mut midi_events = vec![];
+
     let callback = move |_client: &jack::Client, ps: &jack::ProcessScope| -> jack::Control {
         // it's probably a bad idea to re-allocate these two vectors on every call but who cares
         let inputs: Vec<&[f32]> = input_ports.iter().map(|port| port.as_slice(ps)).collect();
@@ -84,6 +94,15 @@ fn main() -> Result<()> {
             .iter_mut()
             .map(|port| port.as_mut_slice(ps))
             .collect();
+
+        midi_events.clear();
+        for port in midi_input_ports.iter() {
+            for raw_midi in port.iter(ps) {
+                midi_events.push(midi_event_from_raw_midi(raw_midi));
+            }
+        }
+
+        send_midi(&mut plugin, midi_events.as_slice());
 
         let mut audio_buffer = host_buffer.bind(&inputs, &mut outputs);
         plugin.process(&mut audio_buffer);
@@ -98,31 +117,40 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// Sends a midi on event on channel 0 with velocity 0x7f
-#[allow(dead_code)]
-fn send_midi(plugin: &mut PluginInstance, data: [u8; 3]) {
-    let num_events = 1;
+fn midi_event_from_raw_midi(raw_midi: RawMidi) -> MidiEvent {
+    let mut midi_data = [0, 0, 0];
+    midi_data[..raw_midi.bytes.len()].copy_from_slice(raw_midi.bytes);
+
     let _reserved = 0;
-    let mut event_0 = MidiEvent {
+
+    MidiEvent {
         event_type: EventType::Midi,
         byte_size: std::mem::size_of::<MidiEvent>() as i32,
         delta_frames: 0,
         flags: 0,
         note_length: 0,
-        note_offset: 0,
-        midi_data: data,
+        note_offset: raw_midi.time as i32,
+        midi_data,
         _midi_reserved: 0,
         detune: 0,
         note_off_velocity: 0,
         _reserved1: 0,
         _reserved2: 0,
-    };
-    let events = [&mut event_0 as *mut _ as *mut Event, std::ptr::null_mut()];
-    let events_struct = Events {
-        num_events,
-        _reserved,
-        events,
-    };
+    }
+}
 
-    plugin.process_events(&events_struct);
+#[allow(dead_code)]
+fn send_midi(plugin: &mut PluginInstance, midi_events: &[MidiEvent]) {
+    let num_events = midi_events.len();
+    let _reserved = 0;
+
+    let a: Vec<u64> = [u64::from_le(num_events as u64), 0]
+        .into_iter()
+        .chain(midi_events.iter().map(|event| event as *const _ as u64))
+        .collect();
+
+    // SAFETY: none
+    let events: &Events = unsafe { std::mem::transmute(a.as_slice().as_ptr()) };
+
+    plugin.process_events(events);
 }
