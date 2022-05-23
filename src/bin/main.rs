@@ -62,6 +62,8 @@ impl DerefMut for SendHostBuffer {
 }
 
 fn main() -> Result<()> {
+    env_logger::init();
+
     let args = Args::parse();
 
     let host = Arc::new(Mutex::new(MyHost));
@@ -196,7 +198,7 @@ fn send_midi(plugin: &mut PluginInstance, events_buffer: &mut Vec<u64>, midi_eve
     if num_events > 0 {
         let _reserved = 0;
 
-        println!("Sending {num_events} midi events");
+        log::debug!("Sending {num_events} midi events");
 
         events_buffer.clear();
         events_buffer.extend(
