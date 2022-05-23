@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::Parser;
 use jack::{AudioIn, AudioOut, MidiIn, RawMidi};
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
@@ -14,6 +14,11 @@ use vst::{
     plugin::Plugin,
 };
 use winit::event_loop::ControlFlow;
+
+#[cfg(unix)]
+use glutin::platform::unix::EventLoopExtUnix;
+#[cfg(unix)]
+use winit::{event::WindowEvent, event_loop::EventLoop};
 
 #[derive(Parser)]
 struct Args {
@@ -150,18 +155,60 @@ fn main() -> Result<()> {
         .context("in activate_async")?;
 
     if let Some(mut editor) = editor {
-        let event_loop = winit::event_loop::EventLoop::new();
-        let window = winit::window::Window::new(&event_loop).context("Creating editor window")?;
-        let hwnd = match window.raw_window_handle() {
-            RawWindowHandle::Win32(win32_handle) => win32_handle.hwnd,
-            _ => bail!("Unsupported raw window handle type"),
-        };
+        #[cfg(target_os = "windows")]
+        {
+            let event_loop = winit::event_loop::EventLoop::new();
+            let window =
+                winit::window::Window::new(&event_loop).context("Creating editor window")?;
+            let hwnd = match window.raw_window_handle() {
+                RawWindowHandle::Win32(win32_handle) => win32_handle.hwnd,
+                handle => bail!("Unsupported raw window handle type: {handle:?}"),
+            };
 
-        editor.open(hwnd);
+            editor.open(hwnd);
 
-        event_loop.run(|_event, _event_loop_window_target, control_flow| {
-            *control_flow = ControlFlow::Wait;
-        });
+            event_loop.run(|_event, _event_loop_window_target, control_flow| {
+                *control_flow = ControlFlow::Wait;
+            });
+        }
+        #[cfg(unix)]
+        {
+            let event_loop: EventLoop<()> = winit::event_loop::EventLoop::new_x11()?;
+            let window_builder = winit::window::WindowBuilder::new();
+            let windowed_context =
+                glutin::ContextBuilder::new().build_windowed(window_builder, &event_loop)?;
+            let windowed_context = unsafe { windowed_context.make_current() }.unwrap();
+
+            let window = windowed_context.window();
+
+            let id_numeric = match window.raw_window_handle() {
+                RawWindowHandle::Xlib(xlib_handle) => xlib_handle.window,
+                handle => bail!("Unsupported raw window handle type: {handle:?}"),
+            };
+
+            windowed_context.swap_buffers().unwrap();
+
+            editor.open(sptr::invalid_mut(id_numeric as usize));
+
+            event_loop.run(move |event, _event_loop_window_target, control_flow| {
+                *control_flow = ControlFlow::Wait;
+
+                match event {
+                    winit::event::Event::WindowEvent { event, .. } => match event {
+                        WindowEvent::Resized(physical_size) => {
+                            windowed_context.resize(physical_size)
+                        }
+                        WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                        _ => (),
+                    },
+                    winit::event::Event::RedrawRequested(_) => {
+                        log::debug!("Redrawing");
+                        windowed_context.swap_buffers().unwrap();
+                    }
+                    _ => (),
+                }
+            });
+        }
     }
 
     let _ = std::io::stdin().read_line(&mut String::new());
