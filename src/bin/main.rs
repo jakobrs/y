@@ -4,20 +4,25 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::Parser;
 use jack::{AudioIn, AudioOut, MidiIn, RawMidi};
+use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 use vst::{
     api::{EventType, Events, MidiEvent},
     host::{Host, HostBuffer, PluginInstance, PluginLoader},
     plugin::Plugin,
 };
+use winit::event_loop::ControlFlow;
 
 #[derive(Parser)]
 struct Args {
     path: PathBuf,
 
     #[clap(long)]
+    show_editor: bool,
+
+    #[clap(long, default_value_t = 0)]
     extra_midi_in: i32,
 }
 
@@ -67,6 +72,20 @@ fn main() -> Result<()> {
     // initialise the plugin
     plugin.init();
 
+    let editor = if args.show_editor {
+        plugin.get_editor()
+    } else {
+        None
+    };
+
+    // send_midi(
+    //     &mut plugin,
+    //     &[midi_event_from_raw_midi(RawMidi {
+    //         time: 0,
+    //         bytes: &[0x90, 60, 0x7f],
+    //     })],
+    // );
+
     let mut host_buffer = SendHostBuffer(HostBuffer::from_info(&plugin_info));
 
     let (client, _client_status) =
@@ -98,6 +117,7 @@ fn main() -> Result<()> {
         midi_events.clear();
         for port in midi_input_ports.iter() {
             for raw_midi in port.iter(ps) {
+                dbg!(raw_midi);
                 midi_events.push(midi_event_from_raw_midi(raw_midi));
             }
         }
@@ -111,6 +131,21 @@ fn main() -> Result<()> {
     };
 
     let _async_client = client.activate_async((), jack::ClosureProcessHandler::new(callback))?;
+
+    if let Some(mut editor) = editor {
+        let event_loop = winit::event_loop::EventLoop::new();
+        let window = winit::window::Window::new(&event_loop)?;
+        let hwnd = match window.raw_window_handle() {
+            RawWindowHandle::Win32(win32_handle) => win32_handle.hwnd,
+            _ => bail!("Unsupported raw window handle type"),
+        };
+
+        editor.open(hwnd);
+
+        event_loop.run(|_event, _event_loop_window_target, control_flow| {
+            *control_flow = ControlFlow::Wait;
+        });
+    }
 
     std::io::stdin().read_line(&mut String::new())?;
 
@@ -142,15 +177,20 @@ fn midi_event_from_raw_midi(raw_midi: RawMidi) -> MidiEvent {
 #[allow(dead_code)]
 fn send_midi(plugin: &mut PluginInstance, midi_events: &[MidiEvent]) {
     let num_events = midi_events.len();
-    let _reserved = 0;
 
-    let a: Vec<u64> = [u64::from_le(num_events as u64), 0]
-        .into_iter()
-        .chain(midi_events.iter().map(|event| event as *const _ as u64))
-        .collect();
+    if num_events > 0 {
+        let _reserved = 0;
 
-    // SAFETY: none
-    let events: &Events = unsafe { std::mem::transmute(a.as_slice().as_ptr()) };
+        println!("Sending {num_events} midi events");
 
-    plugin.process_events(events);
+        let events_buffer: Vec<u64> = [u64::from_le(num_events as u64), 0]
+            .into_iter()
+            .chain(midi_events.iter().map(|event| event as *const _ as u64))
+            .collect();
+
+        // SAFETY: none
+        let events: &Events = unsafe { std::mem::transmute(events_buffer.as_slice().as_ptr()) };
+
+        plugin.process_events(events);
+    }
 }
