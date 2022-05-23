@@ -87,6 +87,7 @@ fn main() -> Result<()> {
 
     // send_midi(
     //     &mut plugin,
+    //     &mut midi_events_buffer,
     //     &[midi_event_from_raw_midi(RawMidi {
     //         time: 0,
     //         bytes: &[0x90, 60, 0x7f],
