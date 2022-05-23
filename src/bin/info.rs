@@ -6,7 +6,7 @@ use std::{
 use clap::Parser;
 use vst::{
     host::{Host, PluginLoader},
-    plugin::{Plugin, PluginParameters},
+    plugin::{Plugin, PluginParameters, CanDo},
 };
 
 #[derive(Parser)]
@@ -19,6 +19,20 @@ struct MyHost;
 impl Host for MyHost {}
 
 type Result<T, E = Box<dyn std::error::Error>> = std::result::Result<T, E>;
+
+const CAN_DO: [CanDo; 11] = [
+    CanDo::Bypass,
+    CanDo::MidiKeyBasedInstrumentControl,
+    CanDo::MidiProgramNames,
+    CanDo::MidiSingleNoteTuningChange,
+    CanDo::Offline,
+    CanDo::ReceiveEvents,
+    CanDo::ReceiveMidiEvent,
+    CanDo::ReceiveSysExEvent,
+    CanDo::ReceiveTimeInfo,
+    CanDo::SendEvents,
+    CanDo::SendMidiEvent
+];
 
 fn main() -> Result<()> {
     let args = Args::parse();
@@ -36,6 +50,17 @@ fn main() -> Result<()> {
         println!("Parameters:");
         let parameter_object = plugin.get_parameter_object();
         enumerate_parameters(&*parameter_object, plugin_info.parameters);
+    }
+
+    println!("Abilities:");
+    for ability in CAN_DO {
+        let description = format!("{ability:?}");
+        match plugin.can_do(ability) {
+            vst::api::Supported::Yes => println!("    {description}: Yes"),
+            vst::api::Supported::Maybe => println!("    {description}: Maybe"),
+            vst::api::Supported::No => (),
+            vst::api::Supported::Custom(custom) => println!("    {description}: Custom {custom}"),
+        }
     }
 
     Ok(())
