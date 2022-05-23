@@ -1,28 +1,21 @@
 use std::{
+    ops::{Deref, DerefMut},
     path::PathBuf,
     sync::{Arc, Mutex},
 };
 
 use anyhow::Result;
 use clap::Parser;
-use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
-use rodio::{OutputStream, Source};
+use jack::{AudioIn, AudioOut};
 use vst::{
     api::{Event, EventType, Events, MidiEvent},
     host::{Host, HostBuffer, PluginInstance, PluginLoader},
     plugin::Plugin,
 };
-use winit::{
-    event_loop::{ControlFlow, EventLoop},
-    window::Window,
-};
 
 #[derive(Parser)]
 struct Args {
     path: PathBuf,
-
-    #[clap(long)]
-    disable_editor: bool,
 }
 
 struct MyHost;
@@ -41,58 +34,19 @@ impl Host for MyHost {
     }
 }
 
-/// An iterator over the samples produced by a plugin
-struct PluginSource {
-    plugin: PluginInstance,
-    host_buffer: HostBuffer<f32>,
-    inputs: Vec<Vec<f32>>,
-    outputs: Vec<Vec<f32>>,
+struct SendHostBuffer(HostBuffer<f32>);
+unsafe impl Send for SendHostBuffer {}
 
-    current_position: usize,
-    current_channel: usize,
+impl Deref for SendHostBuffer {
+    type Target = HostBuffer<f32>;
 
-    length: usize,
-    channels: usize,
-}
-
-unsafe impl Send for PluginSource {}
-
-impl Iterator for PluginSource {
-    type Item = f32;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.current_position == self.length {
-            let mut audio_buffer = self.host_buffer.bind(&self.inputs, &mut self.outputs);
-            self.plugin.process(&mut audio_buffer);
-            self.current_position = 0;
-        }
-
-        let result = self.outputs[self.current_channel][self.current_position];
-
-        self.current_channel += 1;
-        if self.current_channel == self.channels {
-            self.current_channel = 0;
-            self.current_position += 1;
-        }
-
-        Some(result)
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
-impl Source for PluginSource {
-    fn current_frame_len(&self) -> Option<usize> {
-        None
-    }
-
-    fn channels(&self) -> u16 {
-        self.channels as u16
-    }
-
-    fn sample_rate(&self) -> u32 {
-        44_100
-    }
-
-    fn total_duration(&self) -> Option<std::time::Duration> {
-        None
+impl DerefMut for SendHostBuffer {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
 
@@ -110,50 +64,34 @@ fn main() -> Result<()> {
     // initialise the plugin
     plugin.init();
 
-    let editor = plugin.get_editor();
+    let mut host_buffer = SendHostBuffer(HostBuffer::from_info(&plugin_info));
 
-    let host_buffer = HostBuffer::from_info(&plugin_info);
+    let (client, _client_status) =
+        jack::Client::new("vst-host", jack::ClientOptions::NO_START_SERVER)?;
 
-    let inputs = vec![vec![1.; 1024]; plugin_info.inputs as usize];
-    let outputs = vec![vec![0.; 1024]; plugin_info.outputs as usize];
+    // setup ports
+    let input_ports: Vec<jack::Port<AudioIn>> = (0..plugin_info.inputs)
+        .map(|i| client.register_port(&format!("in{i}"), AudioIn::default()))
+        .collect::<Result<_, _>>()?;
+    let mut output_ports: Vec<jack::Port<AudioOut>> = (0..plugin_info.outputs)
+        .map(|i| client.register_port(&format!("out{i}"), AudioOut::default()))
+        .collect::<Result<_, _>>()?;
 
-    // Send a midi signal
-    // send_midi_thing(&mut plugin, args.note);
+    let callback = move |_client: &jack::Client, ps: &jack::ProcessScope| -> jack::Control {
+        // it's probably a bad idea to re-allocate these two vectors on every call but who cares
+        let inputs: Vec<&[f32]> = input_ports.iter().map(|port| port.as_slice(ps)).collect();
+        let mut outputs: Vec<&mut [f32]> = output_ports
+            .iter_mut()
+            .map(|port| port.as_mut_slice(ps))
+            .collect();
 
-    let (_stream, stream_handle) = OutputStream::try_default()?;
-    let source = PluginSource {
-        plugin,
-        host_buffer,
-        inputs,
-        outputs,
+        let mut audio_buffer = host_buffer.bind(&inputs, &mut outputs);
+        plugin.process(&mut audio_buffer);
 
-        current_position: 0,
-        current_channel: 0,
-
-        length: 1024,
-        channels: 2,
+        jack::Control::Continue
     };
-    stream_handle.play_raw(source)?;
 
-    if !args.disable_editor {
-        if let Some(mut editor) = editor {
-            let event_loop = EventLoop::new();
-            let window = Window::new(&event_loop)?;
-            let raw_window_handle = window.raw_window_handle();
-            let hwnd = match raw_window_handle {
-                RawWindowHandle::Win32(win32_handle) => win32_handle.hwnd,
-                _ => panic!("unsupported raw handle type: {:?}", raw_window_handle),
-            };
-            let success = editor.open(hwnd);
-
-            println!("Successfully created window for editor: {}", success);
-
-            event_loop.run(move |event, elwt, control_flow| {
-                eprintln!("{event:?}, {elwt:?}");
-                *control_flow = ControlFlow::Wait;
-            })
-        }
-    }
+    let _async_client = client.activate_async((), jack::ClosureProcessHandler::new(callback))?;
 
     std::io::stdin().read_line(&mut String::new())?;
 

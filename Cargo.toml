@@ -8,11 +8,9 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.57"
 clap = { version = "3.1.18", features = ["derive"] }
+jack = "0.10.0"
 parking_lot = "0.12.0"
-raw-window-handle = "0.4.3"
-rodio = "0.15.0"
 vst = "0.3.0"
-winit = "0.26.1"
 
 [[example]]
 name = "sine"
