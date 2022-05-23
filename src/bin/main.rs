@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use clap::Parser;
 use jack::{AudioIn, AudioOut, MidiIn, RawMidi};
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
@@ -67,8 +67,8 @@ fn main() -> Result<()> {
     let host = Arc::new(Mutex::new(MyHost));
 
     // load the plugin
-    let mut plugin_loader = PluginLoader::load(&args.path, host)?;
-    let mut plugin = plugin_loader.instance()?;
+    let mut plugin_loader = PluginLoader::load(&args.path, host).context("Loading plugin")?;
+    let mut plugin = plugin_loader.instance().context("Instantiating plugin")?;
 
     let plugin_info = plugin.get_info();
 
@@ -97,20 +97,24 @@ fn main() -> Result<()> {
         options |= jack::ClientOptions::NO_START_SERVER;
     }
 
-    let (client, _client_status) = jack::Client::new("vst-host", options)?;
+    let (client, _client_status) =
+        jack::Client::new("vst-host", options).context("Creating JACK client")?;
 
     // setup ports
     let input_ports: Vec<jack::Port<AudioIn>> = (0..plugin_info.inputs)
         .map(|i| client.register_port(&format!("in{i}"), AudioIn::default()))
-        .collect::<Result<_, _>>()?;
+        .collect::<Result<_, _>>()
+        .context("Registering input ports")?;
     let mut output_ports: Vec<jack::Port<AudioOut>> = (0..plugin_info.outputs)
         .map(|i| client.register_port(&format!("out{i}"), AudioOut::default()))
-        .collect::<Result<_, _>>()?;
+        .collect::<Result<_, _>>()
+        .context("Registering output ports")?;
 
     let midi_input_ports: Vec<jack::Port<MidiIn>> = (0..plugin_info.midi_inputs
         + args.extra_midi_in as i32)
         .map(|i| client.register_port(&format!("midi_in{i}"), MidiIn::default()))
-        .collect::<Result<_, _>>()?;
+        .collect::<Result<_, _>>()
+        .context("Registering MIDI input ports")?;
 
     let mut midi_events = vec![];
 
@@ -138,11 +142,13 @@ fn main() -> Result<()> {
         jack::Control::Continue
     };
 
-    let _async_client = client.activate_async((), jack::ClosureProcessHandler::new(callback))?;
+    let _async_client = client
+        .activate_async((), jack::ClosureProcessHandler::new(callback))
+        .context("in activate_async")?;
 
     if let Some(mut editor) = editor {
         let event_loop = winit::event_loop::EventLoop::new();
-        let window = winit::window::Window::new(&event_loop)?;
+        let window = winit::window::Window::new(&event_loop).context("Creating editor window")?;
         let hwnd = match window.raw_window_handle() {
             RawWindowHandle::Win32(win32_handle) => win32_handle.hwnd,
             _ => bail!("Unsupported raw window handle type"),
@@ -155,7 +161,7 @@ fn main() -> Result<()> {
         });
     }
 
-    std::io::stdin().read_line(&mut String::new())?;
+    let _ = std::io::stdin().read_line(&mut String::new());
 
     Ok(())
 }
