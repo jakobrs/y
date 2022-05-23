@@ -22,6 +22,9 @@ struct Args {
     #[clap(long)]
     show_editor: bool,
 
+    #[clap(long)]
+    start_server: bool,
+
     #[clap(long, default_value_t = 0)]
     extra_midi_in: i32,
 }
@@ -88,8 +91,13 @@ fn main() -> Result<()> {
 
     let mut host_buffer = SendHostBuffer(HostBuffer::from_info(&plugin_info));
 
-    let (client, _client_status) =
-        jack::Client::new("vst-host", jack::ClientOptions::NO_START_SERVER)?;
+    let mut options = jack::ClientOptions::empty();
+
+    if !args.start_server {
+        options |= jack::ClientOptions::NO_START_SERVER;
+    }
+
+    let (client, _client_status) = jack::Client::new("vst-host", options)?;
 
     // setup ports
     let input_ports: Vec<jack::Port<AudioIn>> = (0..plugin_info.inputs)
